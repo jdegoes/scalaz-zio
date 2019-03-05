@@ -397,6 +397,18 @@ sealed trait ZIO[-R, +E, +A] extends Serializable { self =>
     new ZIO.BracketAcquire_(self)
 
   /**
+   * Uncurried version of [[bracket_]]. Doesn't offer curried syntax and
+   * can have different type-inference characteristics. It doesn't allocate
+   * intermediate [[scalaz.zio.ZIO.BracketAcquire_]] and
+   * [[scalaz.zio.ZIO.BracketRelease_]] objects.
+   */
+  final def bracket_[R1 <: R, E1 >: E, B](
+    release: ZIO[R1, Nothing, _],
+    use: ZIO[R1, E1, B]
+  ): ZIO[R1, E1, B] =
+    ZIO.bracket(self, (_: A) => release, (_: A) => use)
+
+  /**
    * Returns an effect that, if this effect _starts_ execution, then the
    * specified `finalizer` is guaranteed to begin execution, whether this effect
    * succeeds, fails, or is interrupted.
