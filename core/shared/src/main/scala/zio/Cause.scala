@@ -540,7 +540,7 @@ object Cause extends Serializable {
       case other: Cause[_]   => eq(other) || sym(assoc)(other, self) || sym(dist)(self, other) || sym(empty)(self, other)
       case _                 => false
     }
-    override final def hashCode: Int = Cause.flattenSeq(self).hashCode
+    override final def hashCode: Int = Cause.flatten(self).hashCode
 
     private def eq(that: Cause[Any]): Boolean = (self, that) match {
       case (tl: Then[_], tr: Then[_]) => tl.left == tr.left && tl.right == tr.right
@@ -576,7 +576,7 @@ object Cause extends Serializable {
         eq(other) || sym(assoc)(self, other) || sym(dist)(self, other) || comm(other) || sym(empty)(self, other)
       case _ => false
     }
-    override final def hashCode: Int = Cause.flattenSet(self).hashCode
+    override final def hashCode: Int = Cause.flatten(self).hashCode
 
     private def eq(that: Cause[Any]) = (self, that) match {
       case (bl: Both[_], br: Both[_]) => bl.left == br.left && bl.right == br.right
