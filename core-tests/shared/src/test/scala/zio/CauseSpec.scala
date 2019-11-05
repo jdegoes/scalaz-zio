@@ -84,6 +84,20 @@ object CauseSpec
             }
           }
         ),
+        suite("Empty")(
+          testM("`Empty` is empty element for `Then`") {
+            check(causes) { c =>
+              assert(Then(c, Cause.empty), equalTo(c)) &&
+              assert(Then(Cause.empty, c), equalTo(c))
+            }
+          },
+          testM("`Empty` is empty element for `Both`") {
+            check(causes) { c =>
+              assert(Both(c, Cause.empty), equalTo(c)) &&
+              assert(Both(Cause.empty, c), equalTo(c))
+            }
+          }
+        ),
         suite("Monad Laws:")(
           testM("Left identity") {
             check(causes) { c =>

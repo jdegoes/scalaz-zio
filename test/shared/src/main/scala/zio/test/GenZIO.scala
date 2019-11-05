@@ -25,6 +25,7 @@ trait GenZIO {
    * A generator of `Cause` values
    */
   final def causes[R <: Random with Sized, E](e: Gen[R, E], t: Gen[R, Throwable]): Gen[R, Cause[E]] = {
+    val empty          = Gen.const(Cause.empty)
     val failure        = e.map(Cause.fail)
     val die            = t.map(Cause.die)
     val interrupt      = Gen.anyLong.map(Cause.interrupt)
@@ -48,7 +49,7 @@ trait GenZIO {
     }
 
     def causesN(n: Int): Gen[R, Cause[E]] = Gen.suspend {
-      if (n == 1) Gen.oneOf(failure, die, interrupt)
+      if (n == 1) Gen.oneOf(empty, failure, die, interrupt)
       else if (n == 2) Gen.oneOf(traced(n), meta(n))
       else Gen.oneOf(traced(n), meta(n), sequential(n), parallel(n))
     }
