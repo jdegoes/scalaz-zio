@@ -628,6 +628,8 @@ object Cause extends Serializable {
    * causes that fail after each other.
    */
   private[Cause] def flatten(c: Cause[_]): List[Set[Cause[_]]] = {
+
+    @tailrec
     def loop(causes: List[Cause[_]], flattened: List[Set[Cause[_]]]): List[Set[Cause[_]]] = {
       val (parallel, sequential) = causes.foldLeft((Set.empty[Cause[_]], List.empty[Cause[_]])) {
         case ((parallel, sequential), cause) =>
