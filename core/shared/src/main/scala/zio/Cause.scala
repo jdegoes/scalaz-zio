@@ -540,7 +540,7 @@ object Cause extends Serializable {
       case other: Cause[_]   => eq(other) || sym(assoc)(other, self) || sym(dist)(self, other) || sym(empty)(self, other)
       case _                 => false
     }
-    override final def hashCode: Int = Cause.flatten(self).hashCode
+    override final def hashCode: Int = Cause.hashCode(self)
 
     private def eq(that: Cause[Any]): Boolean = (self, that) match {
       case (tl: Then[_], tr: Then[_]) => tl.left == tr.left && tl.right == tr.right
@@ -576,7 +576,7 @@ object Cause extends Serializable {
         eq(other) || sym(assoc)(self, other) || sym(dist)(self, other) || comm(other) || sym(empty)(self, other)
       case _ => false
     }
-    override final def hashCode: Int = Cause.flatten(self).hashCode
+    override final def hashCode: Int = Cause.hashCode(self)
 
     private def eq(that: Cause[Any]) = (self, that) match {
       case (bl: Both[_], br: Both[_]) => bl.left == br.left && bl.right == br.right
@@ -622,6 +622,12 @@ object Cause extends Serializable {
   private[Cause] def sym(f: (Cause[Any], Cause[Any]) => Boolean): (Cause[Any], Cause[Any]) => Boolean =
     (l, r) => f(l, r) || f(r, l)
 
+  private[Cause] def hashCode(c: Cause[_]): Int = flatten(c) match {
+    case Nil                         => Empty.hashCode
+    case set :: Nil if set.size == 1 => set.head.hashCode
+    case seq                         => seq.hashCode
+  }
+
   /**
    * Flattens a cause to a sequence of sets of causes, where each set
    * represents causes that fail in parallel and sequential sets represent
@@ -636,8 +642,9 @@ object Cause extends Serializable {
           val (set, seq) = step(cause)
           (parallel ++ set, sequential ++ seq)
       }
-      if (sequential.isEmpty) (parallel :: flattened).reverse
-      else loop(sequential, parallel :: flattened)
+      val updated = if (parallel.nonEmpty) parallel :: flattened else flattened
+      if (sequential.isEmpty) updated.reverse
+      else loop(sequential, updated)
     }
 
     loop(List(c), List.empty)

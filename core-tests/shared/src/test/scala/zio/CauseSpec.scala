@@ -134,7 +134,9 @@ object CauseSpecUtil {
           (Both(Both(a, b), c), Both(a, Both(b, c))),
           (Both(Then(a, c), Then(b, c)), Then(Both(a, b), c)),
           (Both(a, b), Both(b, a)),
-          (a, Cause.stackless(a))
+          (a, Cause.stackless(a)),
+          (a, Then(a, Cause.empty)),
+          (a, Both(a, Cause.empty))
         )
     }
 
