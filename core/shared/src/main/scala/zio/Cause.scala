@@ -649,20 +649,26 @@ object Cause extends Serializable {
    */
   private[Cause] def step(c: Cause[_]): (Set[Cause[_]], List[Cause[_]]) = {
 
-    @scala.annotation.tailrec
+    @tailrec
     def loop(
       cause: Cause[_],
       stack: List[Cause[_]],
       parallel: Set[Cause[_]],
       sequential: List[Cause[_]]
     ): (Set[Cause[_]], List[Cause[_]]) = cause match {
-      case Empty               => if (stack.isEmpty) (parallel, sequential) else loop(stack.head, stack.tail, parallel, sequential)
-      case Then(Then(a, b), c) => loop(Cause.Then(a, Cause.Then(b, c)), stack, parallel, sequential)
-      case Then(Both(a, b), c) => loop(Cause.Both(Cause.Then(a, c), Cause.Then(b, c)), stack, parallel, sequential)
-      case Then(left, right)   => loop(left, stack, parallel, right :: sequential)
-      case Both(left, right)   => loop(left, right :: stack, parallel, sequential)
-      case Traced(cause, _)    => loop(cause, stack, parallel, sequential)
-      case Meta(cause, _)      => loop(cause, stack, parallel, sequential)
+      case Empty => if (stack.isEmpty) (parallel, sequential) else loop(stack.head, stack.tail, parallel, sequential)
+      case Then(left, right) =>
+        left match {
+          case Empty        => loop(right, stack, parallel, sequential)
+          case Then(l, r)   => loop(Cause.Then(l, Cause.Then(r, right)), stack, parallel, sequential)
+          case Both(l, r)   => loop(Cause.Both(Cause.Then(l, right), Cause.Then(r, right)), stack, parallel, sequential)
+          case Traced(c, _) => loop(Cause.Then(c, right), stack, parallel, sequential)
+          case Meta(c, _)   => loop(Cause.Then(c, right), stack, parallel, sequential)
+          case o            => loop(o, stack, parallel, right :: sequential)
+        }
+      case Both(left, right) => loop(left, right :: stack, parallel, sequential)
+      case Traced(cause, _)  => loop(cause, stack, parallel, sequential)
+      case Meta(cause, _)    => loop(cause, stack, parallel, sequential)
       case o =>
         if (stack.isEmpty) (parallel ++ Set(o), sequential)
         else loop(stack.head, stack.tail, parallel ++ Set(o), sequential)
