@@ -1907,18 +1907,25 @@ class ZStream[-R, +E, +A] private[stream] (private[stream] val structure: ZStrea
   final def mapMPar[R1 <: R, E1 >: E, B](n: Int)(f: A => ZIO[R1, E1, B]): ZStream[R1, E1, B] =
     ZStream[R1, E1, B] {
       for {
-        out     <- Queue.bounded[Pull[R1, E1, B]](n).toManaged(_.shutdown)
-        permits <- Semaphore.make(n.toLong).toManaged_
+        out        <- Queue.bounded[Pull[R1, E1, B]](n).toManaged(_.shutdown)
+        permits    <- Semaphore.make(n.toLong).toManaged_
+        finalizers <- ZManaged.finalizerRef(_ => UIO.unit)
         _ <- self.foreachManaged { a =>
-              for {
-                p     <- Promise.make[E1, B]
-                latch <- Promise.make[Nothing, Unit]
-                _     <- out.offer(Pull.fromPromise(p))
-                _     <- permits.withPermit(latch.succeed(()) *> (f(a) to p).fork)
-                _     <- latch.await
-              } yield ()
+              ZIO.uninterruptibleMask { restore =>
+                for {
+                  latch <- Promise.make[Nothing, Unit]
+                  p     <- Promise.make[E1, B]
+                  _     <- out.offer(Pull.fromPromise(p))
+                  fiber <- permits.withPermit(latch.succeed(()) *> restore(f(a)).to(p)).forkDaemon
+                  _     <- finalizers.add(_ => fiber.interrupt)
+                  _     <- latch.await
+                } yield ()
+              }
             }.foldCauseM(
-                c => out.offer(Pull.haltNow(c)).unit.toManaged_,
+                c =>
+                  (ZIO.fiberId.flatMap(fiberId => finalizers.runAll(Exit.interrupt(fiberId))) *> out.offer(
+                    Pull.haltNow(c)
+                  )).unit.toManaged_,
                 _ => out.offer(Pull.end).unit.toManaged_
               )
               .fork
