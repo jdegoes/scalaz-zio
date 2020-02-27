@@ -1884,49 +1884,23 @@ class ZStream[-R, +E, +A] private[stream] (private[stream] val structure: ZStrea
   /**
    * Transforms the errors that possibly result from this stream.
    */
-  final def mapErrorCause[E1](f: Cause[E] => Cause[E1]): ZStream[R, E1, A] =
-    ZStream {
-      self.process
-        .map(_.mapErrorCause(Cause.sequenceCauseOption(_) match {
-          case None    => Cause.fail(None)
-          case Some(c) => f(c).map(Some(_))
-        }))
-    }
-
-  /**
-   * Maps over elements of the stream with the specified effectful function.
-   */
-  final def mapM[R1 <: R, E1 >: E, B](f: A => ZIO[R1, E1, B]): ZStream[R1, E1, B] =
-    ZStream[R1, E1, B](self.process.map(_.flatMap(f(_).mapError(Some(_)))))
-
-  /**
-   * Maps over elements of the stream with the specified effectful function,
-   * executing up to `n` invocations of `f` concurrently. Transformed elements
-   * will be emitted in the original order.
-   */
   final def mapMPar[R1 <: R, E1 >: E, B](n: Int)(f: A => ZIO[R1, E1, B]): ZStream[R1, E1, B] =
     ZStream[R1, E1, B] {
       for {
-        out        <- Queue.bounded[Pull[R1, E1, B]](n).toManaged(_.shutdown)
-        permits    <- Semaphore.make(n.toLong).toManaged_
-        finalizers <- ZManaged.finalizerRef(_ => UIO.unit)
+        out     <- Queue.bounded[Pull[R1, E1, B]](n).toManaged(_.shutdown)
+        permits <- Semaphore.make(n.toLong).toManaged_
         _ <- self.foreachManaged { a =>
-              ZIO.uninterruptibleMask { restore =>
-                for {
-                  latch <- Promise.make[Nothing, Unit]
-                  p     <- Promise.make[E1, B]
-                  _     <- out.offer(Pull.fromPromise(p))
-                  fiber <- permits.withPermit(latch.succeed(()) *> restore(f(a)).to(p)).forkDaemon
-                  _     <- finalizers.add(_ => fiber.interrupt)
-                  _     <- latch.await
-                } yield ()
-              }
+              for {
+                latch <- Promise.make[Nothing, Unit]
+                p     <- Promise.make[E1, B]
+                _     <- out.offer(Pull.fromPromise(p))
+                _     <- permits.withPermit(latch.succeed(()) *> f(a).to(p)).fork
+                _     <- latch.await
+              } yield ()
+
             }.foldCauseM(
-                c =>
-                  (ZIO.fiberId.flatMap(fiberId => finalizers.runAll(Exit.interrupt(fiberId))) *> out.offer(
-                    Pull.haltNow(c)
-                  )).unit.toManaged_,
-                _ => out.offer(Pull.end).unit.toManaged_
+                c => out.offer(Pull.haltNow(c)).unit.toManaged_,
+                _ => (out.offer(Pull.end) *> ZIO.children.flatMap(Fiber.awaitAll)).unit.toManaged_
               )
               .fork
       } yield out.take.flatten
