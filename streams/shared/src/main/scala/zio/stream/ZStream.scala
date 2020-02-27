@@ -1884,6 +1884,26 @@ class ZStream[-R, +E, +A] private[stream] (private[stream] val structure: ZStrea
   /**
    * Transforms the errors that possibly result from this stream.
    */
+  final def mapErrorCause[E1](f: Cause[E] => Cause[E1]): ZStream[R, E1, A] =
+    ZStream {
+      self.process
+        .map(_.mapErrorCause(Cause.sequenceCauseOption(_) match {
+          case None    => Cause.fail(None)
+          case Some(c) => f(c).map(Some(_))
+        }))
+    }
+
+  /**
+   * Maps over elements of the stream with the specified effectful function.
+   */
+  final def mapM[R1 <: R, E1 >: E, B](f: A => ZIO[R1, E1, B]): ZStream[R1, E1, B] =
+    ZStream[R1, E1, B](self.process.map(_.flatMap(f(_).mapError(Some(_)))))
+
+  /**
+   * Maps over elements of the stream with the specified effectful function,
+   * executing up to `n` invocations of `f` concurrently. Transformed elements
+   * will be emitted in the original order.
+   */
   final def mapMPar[R1 <: R, E1 >: E, B](n: Int)(f: A => ZIO[R1, E1, B]): ZStream[R1, E1, B] =
     ZStream[R1, E1, B] {
       for {
