@@ -462,7 +462,8 @@ sealed trait ZIO[-R, +E, +A] extends Serializable with ZIOPlatformSpecific[R, E,
    * Returns an effect whose interruption will be disconnected from the
    * fiber's own interruption.
    */
-  final def disconnect: ZIO[R, E, A] = self.fork(SuperviseMode.InterruptFork).flatMap(_.join)
+  final def disconnect: ZIO[R, E, A] =
+    self.fork(SuperviseMode.interruptFork).flatMap(_.join).refailWithTrace
 
   /**
    * Repeats this effect until its result satisfies the specified predicate.
@@ -720,7 +721,7 @@ sealed trait ZIO[-R, +E, +A] extends Serializable with ZIOPlatformSpecific[R, E,
    * } yield a
    * }}}
    */
-  final def fork: URIO[R, Fiber.Runtime[E, A]] = fork(SuperviseMode.Interrupt)
+  final def fork: URIO[R, Fiber.Runtime[E, A]] = fork(SuperviseMode.interrupt)
 
   /**
    * Returns an effect that forks this effect into its own separate fiber,
@@ -758,18 +759,17 @@ sealed trait ZIO[-R, +E, +A] extends Serializable with ZIOPlatformSpecific[R, E,
    * execute the effect in the fiber, while ensuring its interruption when
    * the effect supplied to [[ZManaged#use]] completes.
    */
-  final def forkManaged(
-    superviseMode: SuperviseMode = SuperviseMode.Interrupt
-  ): ZManaged[R, Nothing, Fiber.Runtime[E, A]] = toManaged_.fork(superviseMode)
+  final def forkManaged(superviseMode: SuperviseMode): ZManaged[R, Nothing, Fiber.Runtime[E, A]] =
+    toManaged_.fork(superviseMode)
 
-  final def forkManaged: ZManaged[R, Nothing, Fiber.Runtime[E, A]] = forkManaged(SuperviseMode.Interrupt)
+  final def forkManaged: ZManaged[R, Nothing, Fiber.Runtime[E, A]] = forkManaged(SuperviseMode.interrupt)
 
   /**
    * Forks an effect that will be executed on the specified `ExecutionContext`.
    */
   final def forkOn(
     ec: ExecutionContext,
-    superviseMode: SuperviseMode = SuperviseMode.Interrupt
+    superviseMode: SuperviseMode = SuperviseMode.interrupt
   ): ZIO[R, E, Fiber.Runtime[E, A]] =
     self.on(ec).fork(superviseMode)
 
@@ -1336,8 +1336,8 @@ sealed trait ZIO[-R, +E, +A] extends Serializable with ZIOPlatformSpecific[R, E,
   final def raceWith[R1 <: R, E1, E2, B, C](that: ZIO[R1, E1, B])(
     leftDone: (Exit[E, A], Fiber[E1, B]) => ZIO[R1, E2, C],
     rightDone: (Exit[E1, B], Fiber[E, A]) => ZIO[R1, E2, C],
-    leftSuperviseMode: SuperviseMode = SuperviseMode.Interrupt,
-    rightSuperviseMode: SuperviseMode = SuperviseMode.Interrupt
+    leftSuperviseMode: SuperviseMode = SuperviseMode.interrupt,
+    rightSuperviseMode: SuperviseMode = SuperviseMode.interrupt
   ): ZIO[R1, E2, C] =
     new ZIO.RaceWith[R1, E, E1, E2, A, B, C](
       self,
@@ -3775,7 +3775,7 @@ object ZIO extends ZIOCompanionPlatformSpecific {
     case Exit.Failure(cause) => haltNow(cause)
   }
 
-  private[zio] def failNow[E](error: E): IO[E, Nothing] = new ZIO.Fail(_ => Cause.fail(error))
+  private[zio] def failNow[E](error: E): IO[E, Nothing] = fail(error)
 
   private[zio] def haltNow[E](cause: Cause[E]): IO[E, Nothing] = new ZIO.Fail(_ => cause)
 

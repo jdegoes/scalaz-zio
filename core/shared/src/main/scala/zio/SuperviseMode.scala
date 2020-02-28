@@ -16,33 +16,48 @@
 
 package zio
 
+import zio.internal.FiberContext
+
 /**
  * Dictates the supervision mode when a child fiber is forked from a parent
  * fiber. There are three possible supervision modes: `Disown`, `Await`,
  * and `Interrupt`, which determine what the parent fiber will do with the
  * child fiber when the parent fiber exits.
  */
-sealed trait SuperviseMode extends Serializable with Product
+final case class SuperviseMode(run: (Exit[Any, Any], Fiber[Any, Any]) => UIO[Any])
+
 object SuperviseMode {
 
   /**
    * The child fiber will be disowned when the parent fiber exits.
    */
-  case object Disown extends SuperviseMode
+  val disown: SuperviseMode = SuperviseMode {
+    case (_, fiber: FiberContext[_, _]) => UIO.effectTotal(Fiber.track(fiber))
+    case _ => UIO.unit
+  }
 
   /**
    * The child fiber will be awaited when the parent fiber exits.
    */
-  case object Await extends SuperviseMode
+  val await: SuperviseMode = SuperviseMode((_, fiber) => fiber.await)
+
+  /**
+    * The child fiber will be awaited when the parent fiber exits normally and
+    * interrupted otherwise.
+    */
+  val inherit: SuperviseMode = SuperviseMode {
+    case (Exit.Success(_), fiber) => fiber.await
+    case (Exit.Failure(_), fiber) => fiber.interrupt
+  }
 
   /**
    * The child fiber will be interrupted when the parent fiber exits.
    */
-  case object Interrupt extends SuperviseMode
+  val interrupt: SuperviseMode = SuperviseMode((_, fiber) => fiber.interrupt)
 
   /**
    * The child fiber will be interrupted when the parent fiber exits, but in
    * the background, without blocking the parent fiber.
    */
-  case object InterruptFork extends SuperviseMode
+  val interruptFork: SuperviseMode = SuperviseMode((_, fiber) => fiber.interrupt.forkDaemon)
 }

@@ -1907,6 +1907,7 @@ class ZStream[-R, +E, +A] private[stream] (private[stream] val structure: ZStrea
   final def mapMPar[R1 <: R, E1 >: E, B](n: Int)(f: A => ZIO[R1, E1, B]): ZStream[R1, E1, B] =
     ZStream[R1, E1, B] {
       for {
+        _ <- UIO(println("Testing")).toManaged_
         out     <- Queue.bounded[Pull[R1, E1, B]](n).toManaged(_.shutdown)
         permits <- Semaphore.make(n.toLong).toManaged_
         _ <- self.foreachManaged { a =>
@@ -1914,13 +1915,19 @@ class ZStream[-R, +E, +A] private[stream] (private[stream] val structure: ZStrea
                 p     <- Promise.make[E1, B]
                 latch <- Promise.make[Nothing, Unit]
                 _     <- out.offer(Pull.fromPromise(p))
-                _     <- permits.withPermit(latch.succeed(()) *> f(a).to(p)).fork(SuperviseMode.Await)
+                _     <- permits.withPermit {
+                          ZIO.uninterruptibleMask { restore =>
+                            latch.succeed(()) *> UIO(println("Internal Latch completed")) *> restore(f(a)).to(p)
+                          }
+                        }.fork
                 _     <- latch.await
+                _     <- UIO(println("After internal latch"))
               } yield ()
             }.foldCauseM(
-                c => out.offer(Pull.haltNow(c)).unit.toManaged_,
-                _ => out.offer(Pull.end).unit.toManaged_
+                c => UIO(println("Failed with cause")).toManaged_ *> out.offer(Pull.haltNow(c)).unit.toManaged_,
+                _ => UIO(println("Succeeded")).toManaged_ *> out.offer(Pull.end).unit.toManaged_ *> UIO(println("Offered Pull.end to queue")).toManaged_
               )
+              .onExitFirst(exit => UIO(println(s"Exit is: $exit")))
               .fork
       } yield out.take.flatten
     }

@@ -1388,7 +1388,7 @@ object StreamSpec extends ZIOBaseSpec {
             r <- IO.foreachParN(8)(data)(f)
           } yield assert(l)(equalTo(r))
         }
-      } @@ diagnose(30.seconds),
+      },
       testM("order when n = 1") {
         for {
           queue  <- Queue.unbounded[Int]
@@ -1402,12 +1402,14 @@ object StreamSpec extends ZIOBaseSpec {
           latch       <- Promise.make[Nothing, Unit]
           fib <- Stream(())
                   .mapMPar(1) { _ =>
-                    (latch.succeed(()) *> ZIO.never).onInterrupt(interrupted.set(true))
+                    (latch.succeed(()) *> ZIO.descriptorWith(s => UIO(println(s))) *> ZIO.never).onInterrupt(interrupted.set(true))
                   }
                   .runDrain
                   .fork
           _      <- latch.await
+          _ <- UIO(println("After latch"))
           _      <- fib.interrupt
+                    _ <- UIO(println("After interruption"))
           result <- interrupted.get
         } yield assert(result)(isTrue)
       },

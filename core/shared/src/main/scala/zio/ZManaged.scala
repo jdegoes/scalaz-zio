@@ -457,20 +457,16 @@ final class ZManaged[-R, +E, +A] private (reservation: ZIO[R, E, Reservation[R, 
       } yield Reservation(
         acquire = UIO.succeedNow(fiber),
         release = e =>
-          (superviseMode match {
-            case SuperviseMode.Interrupt => fiber.interrupt *> finalizer.get.flatMap(f => f(e))
-            case SuperviseMode.InterruptFork => (fiber.interrupt *> finalizer.get.flatMap(f => f(e))).uninterruptible.forkDaemon
-            case SuperviseMode.Await     => fiber.await *> finalizer.get.flatMap(f => f(e))
-            case SuperviseMode.Disown =>
-              ZIO.disown(fiber) *> (fiber.await *> finalizer.get
-                .flatMap(f => f(e))
-                .uninterruptible
-                .forkDaemon) // TODO: Testme
-          })
+          ZIO.uninterruptible { 
+            UIO(println(s"At beginning of ZManaged.fork release with exit value ${e.untraced}")) *>
+            superviseMode.run(e, fiber) *>
+              fiber.await *>
+                finalizer.get.flatMap(f => f(e)) // TODO: Testme
+          }
       )
     }
 
-  def fork: ZManaged[R, Nothing, Fiber.Runtime[E, A]] = fork(SuperviseMode.Interrupt)
+  def fork: ZManaged[R, Nothing, Fiber.Runtime[E, A]] = fork(SuperviseMode.interrupt)
 
   /**
    * Unwraps the optional success of this effect, but can fail with unit value.

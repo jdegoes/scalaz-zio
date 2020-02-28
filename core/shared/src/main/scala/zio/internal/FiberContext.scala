@@ -873,12 +873,7 @@ private[zio] final class FiberContext[E, A](
             withChildren(_.clear())
 
             ZIO.foreach_(children) { child =>
-              child.superviseMode match {
-                case SuperviseMode.Disown         => UIO(Fiber.track(child))
-                case SuperviseMode.Await          => child.await
-                case SuperviseMode.Interrupt      => child.interruptAs(fiberId)
-                case SuperviseMode.InterruptFork  => child.interruptAs(fiberId).forkDaemon
-              }
+              child.superviseMode.run(v, child)
             }
           }
 
