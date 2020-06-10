@@ -3282,11 +3282,11 @@ object ZIOSpec extends ZIOBaseSpec {
         )
       }
     ),
-    suite("extendScope")(
+    suite("forkScopeMask")(
       testM("should extend scope of child") {
         for {
           latch  <- Promise.make[Nothing, Unit]
-          fiber  <- ZIO.extendScope(latch.await.fork.fork)
+          fiber  <- ZIO.forkScopeMask(restore => restore(latch.await).fork.fork)
           inner  <- fiber.join
           status <- inner.status
         } yield assert(status.isDone)(isFalse)
@@ -3294,7 +3294,7 @@ object ZIOSpec extends ZIOBaseSpec {
       testM("should extend scope of grandchild") {
         for {
           latch  <- Promise.make[Nothing, Unit]
-          fiber  <- ZIO.extendScope(latch.await.fork.fork.fork)
+          fiber  <- ZIO.forkScopeMask(restore => restore(latch.await).fork.fork.fork)
           inner1 <- fiber.join
           inner2 <- inner1.join
           status <- inner2.status

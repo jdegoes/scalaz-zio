@@ -458,7 +458,8 @@ object Fiber extends FiberPlatformSpecific {
     interrupters: Set[Fiber.Id],
     interruptStatus: InterruptStatus,
     executor: Executor,
-    scope: ZScope[Exit[Any, Any]]
+    scope: ZScope[Exit[Any, Any]],
+    forkScope: Option[ZScope[Any]]
   )
 
   final case class Dump(

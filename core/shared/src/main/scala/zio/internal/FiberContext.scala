@@ -43,7 +43,7 @@ private[zio] final class FiberContext[E, A](
   val fiberRefLocals: FiberRefLocals,
   supervisor0: Supervisor[Any],
   openScope: ZScope.Open[Exit[E, A]],
-  scopeExtender: ZScope[Any]
+  forkScope0: ZScope[Any]
 ) extends Fiber.Runtime.Internal[E, A] { self =>
 
   import FiberContext._
@@ -69,7 +69,7 @@ private[zio] final class FiberContext[E, A](
   private[this] val executors       = Stack[Executor](startExec)
   private[this] val interruptStatus = StackBool(startIStatus.toBoolean)
   private[this] val supervisors     = Stack[Supervisor[Any]](supervisor0)
-  private[this] val extenders       = Stack[ZScope[Any]](scopeExtender)
+  private[this] val forkScopes       = Stack[ZScope[Any]](forkScope0)
 
   var scopeKey: ZScope.Key = null
 
@@ -235,8 +235,8 @@ private[zio] final class FiberContext[E, A](
 
     val raceIndicator = new AtomicBoolean(true)
 
-    val left  = fork[EL, A](race.left.asInstanceOf[IO[EL, A]], None, scope)
-    val right = fork[ER, B](race.right.asInstanceOf[IO[ER, B]], None, scope)
+    val left  = fork[EL, A](race.left.asInstanceOf[IO[EL, A]], None)
+    val right = fork[ER, B](race.right.asInstanceOf[IO[ER, B]], None)
 
     ZIO
       .effectAsync[R, E, C](
@@ -513,7 +513,7 @@ private[zio] final class FiberContext[E, A](
                   case ZIO.Tags.Fork =>
                     val zio = curZio.asInstanceOf[ZIO.Fork[Any, Any, Any]]
 
-                    curZio = nextInstr(fork(zio.value, zio.scope, zio.extender.orNull))
+                    curZio = nextInstr(fork(zio.value, zio.scope))
 
                   case ZIO.Tags.Descriptor =>
                     val zio = curZio.asInstanceOf[ZIO.Descriptor[Any, E, Any]]
@@ -611,11 +611,11 @@ private[zio] final class FiberContext[E, A](
 
                     curZio = push.bracket_(pop, zio.zio)
 
-                  case ZIO.Tags.ExtendScope =>
-                    val zio = curZio.asInstanceOf[ZIO.ExtendScope[Any, E, Any]]
+                  case ZIO.Tags.SetForkScope =>
+                    val zio = curZio.asInstanceOf[ZIO.SetForkScope[Any, E, Any]]
 
-                    val push = ZIO.effectTotal(extenders.push(scope))
-                    val pop  = ZIO.effectTotal(extenders.pop())
+                    val push = ZIO.effectTotal(forkScopes.push(zio.scope.orNull))
+                    val pop  = ZIO.effectTotal(forkScopes.pop())
 
                     curZio = push.bracket_(pop, zio.zio)
                 }
@@ -664,7 +664,8 @@ private[zio] final class FiberContext[E, A](
       state.get.interrupted.interruptors,
       InterruptStatus.fromBoolean(isInterruptible()),
       executor,
-      scope
+      scope,
+      Option(forkScopes.peekOrElse(null))
     )
 
   /**
@@ -672,8 +673,7 @@ private[zio] final class FiberContext[E, A](
    */
   def fork[E, A](
     zio: IO[E, A],
-    forkScope: Option[ZScope[Any]] = None,
-    overrideExtender: ZScope[Any] = null
+    forkScope: Option[ZScope[Any]] = None
   ): FiberContext[E, A] = {
     val childFiberRefLocals: FiberRefLocals = Platform.newWeakHashMap()
     val locals                              = fiberRefLocals.asScala: @silent("JavaConverters")
@@ -687,7 +687,7 @@ private[zio] final class FiberContext[E, A](
       if ((traceExec || traceStack) && tracingRegion) Some(cutAncestryTrace(captureTrace(null)))
       else None
 
-    val parentScope = forkScope.getOrElse(scope)
+    val parentScope = (forkScope orElse Option(forkScopes.peekOrElse(null))).getOrElse(scope)
 
     val currentEnv = environments.peek()
     val currentSup = supervisors.peek()
@@ -695,11 +695,6 @@ private[zio] final class FiberContext[E, A](
     val childId = Fiber.newFiberId()
 
     val childScope = ZScope.unsafeMake[Exit[E, A]]()
-
-    val currentExtender = if (overrideExtender ne null) overrideExtender else extenders.peekOrElse(null)
-
-    // If we're in a region of scope extension, be sure to extend the scope of the child:
-    if (currentExtender ne null) currentExtender.unsafeExtend(childScope.scope)
 
     val childContext = new FiberContext[E, A](
       childId,
@@ -712,7 +707,7 @@ private[zio] final class FiberContext[E, A](
       childFiberRefLocals,
       currentSup,
       childScope,
-      currentExtender
+      forkScopes.peekOrElse(null)
     )
 
     if (currentSup ne Supervisor.none) {
