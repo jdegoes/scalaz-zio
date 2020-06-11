@@ -2349,7 +2349,7 @@ object ZIOSpec extends ZIOBaseSpec {
           _        <- effect race effect
           value2   <- latch.succeed(()) *> awaitAll *> ref.get
         } yield assert(value2)(isLessThanEqualTo(1))
-      },
+      } @@ flaky,
       testM("firstSuccessOf of values") {
         val io = IO.firstSuccessOf(IO.fail(0), List(IO.succeed(100))).either
         assertM(io)(isRight(equalTo(100)))

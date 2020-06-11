@@ -2538,21 +2538,19 @@ object ZIO extends ZIOCompanionPlatformSpecific {
   def overrideForkScope[R, E, A](scope: ZScope[Any])(zio: ZIO[R, E, A]): ZIO[R, E, A] =
     new ZIO.SetForkScope(zio, Some(scope))
 
-  // def extendScope[R, E, A](zio: ZIO[R, E, A]): ZIO[R, E, A] =
-  //   descriptorWith(d => new ZIO.SetForkScope(zio, Some(d.scope)))
+  def extendScope[R, E, A](zio: ZIO[R, E, A]): ZIO[R, E, A] =
+    descriptorWith(d => new ZIO.SetForkScope(zio, Some(d.scope)))
 
   def resetForkScope[R, E, A](zio: ZIO[R, E, A]): ZIO[R, E, A] =
     new ZIO.SetForkScope(zio, None)
 
   def getForkScope: UIO[Option[ZScope[Any]]] = ZIO.descriptor.map(_.forkScope)
 
-  def forkScopeMask[R, E, A](f: ForkScopeResetter => ZIO[R, E, A]): ZIO[R, E, A] = 
-    getForkScope.flatMap { forkScope =>
-      f(new ForkScopeResetter(forkScope))
-    }
+  def forkScopeMask[R, E, A](f: ForkScopeResetter => ZIO[R, E, A]): ZIO[R, E, A] =
+    getForkScope.flatMap(forkScope => extendScope(f(new ForkScopeResetter(forkScope))))
 
   class ForkScopeResetter(forkScope: Option[ZScope[Any]]) {
-    def apply[R, E, A](zio: ZIO[R, E, A]): ZIO[R, E, A] = 
+    def apply[R, E, A](zio: ZIO[R, E, A]): ZIO[R, E, A] =
       forkScope.fold(resetForkScope(zio))(overrideForkScope(_)(zio))
   }
 
@@ -4078,7 +4076,8 @@ object ZIO extends ZIOCompanionPlatformSpecific {
     override def tag = Tags.Supervise
   }
 
-  private[zio] final class SetForkScope[R, E, A](val zio: ZIO[R, E, A], val scope: Option[ZScope[Any]]) extends ZIO[R, E, A] {
+  private[zio] final class SetForkScope[R, E, A](val zio: ZIO[R, E, A], val scope: Option[ZScope[Any]])
+      extends ZIO[R, E, A] {
     override def tag = Tags.SetForkScope
   }
 

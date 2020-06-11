@@ -69,7 +69,7 @@ private[zio] final class FiberContext[E, A](
   private[this] val executors       = Stack[Executor](startExec)
   private[this] val interruptStatus = StackBool(startIStatus.toBoolean)
   private[this] val supervisors     = Stack[Supervisor[Any]](supervisor0)
-  private[this] val forkScopes       = Stack[ZScope[Any]](forkScope0)
+  private[this] val forkScopes      = Stack[ZScope[Any]](forkScope0)
 
   var scopeKey: ZScope.Key = null
 
@@ -614,7 +614,7 @@ private[zio] final class FiberContext[E, A](
                   case ZIO.Tags.SetForkScope =>
                     val zio = curZio.asInstanceOf[ZIO.SetForkScope[Any, E, Any]]
 
-                    val push = ZIO.effectTotal(forkScopes.push(zio.scope.orNull))
+                    val push = ZIO.effectTotal(zio.scope.foreach(forkScopes.push))
                     val pop  = ZIO.effectTotal(forkScopes.pop())
 
                     curZio = push.bracket_(pop, zio.zio)
