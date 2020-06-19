@@ -1121,7 +1121,7 @@ sealed trait ZIO[-R, +E, +A] extends Serializable with ZIOPlatformSpecific[R, E,
    * Returns a new effect that will utilize the specified scope to supervise
    * any fibers forked within the original effect.
    */
-  final def overrideForkScope(scope: ZScope[Any]): ZIO[R, E, A] =
+  final def overrideForkScope(scope: ZScope[Exit[Any, Any]]): ZIO[R, E, A] =
     new ZIO.OverrideForkScope(self, Some(scope))
 
   /**
@@ -3022,7 +3022,7 @@ object ZIO extends ZIOCompanionPlatformSpecific {
   /**
    * Retrieves the scope that will be used to supervise forked effects.
    */
-  def forkScope: UIO[ZScope[Any]] =
+  def forkScope: UIO[ZScope[Exit[Any, Any]]] =
     new ZIO.GetForkScope(ZIO.succeed(_))
 
   /**
@@ -3030,13 +3030,13 @@ object ZIO extends ZIOCompanionPlatformSpecific {
    * scope, passing a function that allows restoring the fork scope to
    * what it was originally.
    */
-  def forkScopeMask[R, E, A](newScope: ZScope[Any])(f: ForkScopeRestore => ZIO[R, E, A]): ZIO[R, E, A] =
+  def forkScopeMask[R, E, A](newScope: ZScope[Exit[Any, Any]])(f: ForkScopeRestore => ZIO[R, E, A]): ZIO[R, E, A] =
     ZIO.forkScopeWith(scope => f(new ForkScopeRestore(scope)).overrideForkScope(newScope))
 
   /**
    * Retrieves the scope that will be used to supervise forked effects.
    */
-  def forkScopeWith[R, E, A](f: ZScope[Any] => ZIO[R, E, A]): ZIO[R, E, A] =
+  def forkScopeWith[R, E, A](f: ZScope[Exit[Any, Any]] => ZIO[R, E, A]): ZIO[R, E, A] =
     new ZIO.GetForkScope(f)
 
   /**
@@ -3805,7 +3805,7 @@ object ZIO extends ZIOCompanionPlatformSpecific {
       }
   }
 
-  final class Grafter(private val scope: ZScope[Any]) extends AnyVal {
+  final class Grafter(private val scope: ZScope[Exit[Any, Any]]) extends AnyVal {
     def apply[R, E, A](zio: ZIO[R, E, A]): ZIO[R, E, A] =
       new ZIO.OverrideForkScope(zio, Some(scope))
   }
@@ -3930,7 +3930,7 @@ object ZIO extends ZIOCompanionPlatformSpecific {
     }
   }
 
-  final class ForkScopeRestore(private val scope: ZScope[Any]) extends AnyVal {
+  final class ForkScopeRestore(private val scope: ZScope[Exit[Any, Any]]) extends AnyVal {
     def apply[R, E, A](zio: ZIO[R, E, A]): ZIO[R, E, A] =
       zio.overrideForkScope(scope)
   }
@@ -4154,13 +4154,13 @@ object ZIO extends ZIOCompanionPlatformSpecific {
     override def tag = Tags.Supervise
   }
 
-  private[zio] final class GetForkScope[R, E, A](val f: ZScope[Any] => ZIO[R, E, A]) extends ZIO[R, E, A] {
+  private[zio] final class GetForkScope[R, E, A](val f: ZScope[Exit[Any, Any]] => ZIO[R, E, A]) extends ZIO[R, E, A] {
     override def tag = Tags.GetForkScope
   }
 
   private[zio] final class OverrideForkScope[R, E, A](
     val zio: ZIO[R, E, A],
-    val forkScope: Option[ZScope[Any]]
+    val forkScope: Option[ZScope[Exit[Any, Any]]]
   ) extends ZIO[R, E, A] {
     override def tag = Tags.OverrideForkScope
   }

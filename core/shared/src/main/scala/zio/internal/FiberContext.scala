@@ -68,7 +68,7 @@ private[zio] final class FiberContext[E, A](
   private[this] val executors         = Stack[Executor](startExec)
   private[this] val interruptStatus   = StackBool(startIStatus.toBoolean)
   private[this] val supervisors       = Stack[Supervisor[Any]](supervisor0)
-  private[this] val forkScopeOverride = Stack[Option[ZScope[Any]]]()
+  private[this] val forkScopeOverride = Stack[Option[ZScope[Exit[Any, Any]]]]()
 
   var scopeKey: ZScope.Key = null
 
@@ -727,12 +727,13 @@ private[zio] final class FiberContext[E, A](
       // interrupted, but do so using a weak finalizer, which will be removed
       // as soon as the key is garbage collected:
       val key = parentScope.unsafeEnsure(
-        _ =>
+        exit =>
           UIO.effectSuspendTotal {
             val childContext = childContextRef()
 
             if (childContext ne null) {
-              childContext.interruptAs(fiberId)
+              val interruptors = exit.fold(_.interruptors, _ => Set.empty)
+              childContext.interruptAs(interruptors.headOption.getOrElse(fiberId))
             } else ZIO.unit
           },
         ZScope.Mode.Weak
