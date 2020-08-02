@@ -1967,9 +1967,9 @@ object ZStreamSpec extends ZIOBaseSpec {
           testM("awaits children fibers properly") {
             assertM(
               ZStream
-                .fromIterable((0 to 100))
+                .fromIterable((0 to 10))
                 .interruptWhen(ZIO.never)
-                .mapMPar(8)(_ => ZIO(1).repeat(Schedule.recurs(2000)))
+                .mapMPar(8)(_ => ZIO(1).repeat(Schedule.recurs(20)))
                 .runDrain
                 .run
                 .map(_.interrupted)
