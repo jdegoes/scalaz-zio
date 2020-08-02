@@ -1540,7 +1540,7 @@ object ZStreamSpec extends ZIOBaseSpec {
                   } yield result
                 )(equalTo(Chunk(Chunk(1), Chunk(2), Chunk(3))))
             }
-          },
+          } @@ TestAspect.jvmOnly,
           testM("will process first chunk") {
             for {
               queue  <- Queue.unbounded[Int]
@@ -1577,7 +1577,7 @@ object ZStreamSpec extends ZIOBaseSpec {
                 result <- f.join
               } yield result)(equalTo(Chunk(Chunk(1, 2), Chunk(3, 4), Chunk(5))))
             }
-          } @@ timeout(10.seconds) @@ flaky,
+          } @@ timeout(10.seconds) @@ flaky @@ TestAspect.jvmOnly,
           testM("group immediately when chunk size is reached") {
             assertM(ZStream(1, 2, 3, 4).groupedWithin(2, 10.seconds).runCollect)(
               equalTo(Chunk(Chunk(1, 2), Chunk(3, 4)))
