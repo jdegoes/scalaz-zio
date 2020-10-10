@@ -1,7 +1,6 @@
 package zio.stream.experimental
 
 import zio._
-import java.util.concurrent.atomic.AtomicReference
 
 sealed trait ZConduit[-In, -R, +E, +Out, +Z] { self =>
   def &&&[In2, R1 <: R, E1 >: E, Out2, Z2](
@@ -111,18 +110,16 @@ sealed trait ZConduit[-In, -R, +E, +Out, +Z] { self =>
     input: ZIO[R1, E1, Chunk[In1]],
     output: Chunk[Out] => ZIO[R1, E1, Any]
   ): ZIO[R1, Nothing, (UIO[Either[E1, Z]], IO[E1, Z])] =
-    ZScope.make[Any].flatMap { scope =>
+    ZScope.make[Any].zip(DelayedRef.make[() => Either[E1, Z]]).flatMap { case (scope, getterRef) =>
       ZIO
         .access[R1] { env =>
           import ZConduit._
 
           val _ = (input, output)
 
-          val getter: AtomicReference[() => Either[E1, Z]] = ???
-
           def loop[In, R, E, Out, Z](
             scope: ZScope[Any],
-            getter: AtomicReference[() => Either[E, Z]],
+            getterRef: DelayedRef[() => Either[E, Z]],
             env: R,
             in: ZIO[R, E, Chunk[In]],
             leftover: Chunk[In],
@@ -133,9 +130,9 @@ sealed trait ZConduit[-In, -R, +E, +Out, +Z] { self =>
             conduit match {
               case Pipe(_, _) => ???
               case read: Read[In, R, E, Out, Z] =>
-                UIO(getter.set(read.done)) *>
-                  (if (leftover.nonEmpty) loop(scope, getter, env, in, Chunk.empty, read.more(leftover))
-                   else in.flatMap(in0 => loop(scope, getter, env, in, Chunk.empty, read.more(in0))).provide(env))
+                getterRef.set(read.done) *>
+                  (if (leftover.nonEmpty) loop(scope, getterRef, env, in, Chunk.empty, read.more(leftover))
+                   else in.flatMap(in0 => loop(scope, getterRef, env, in, Chunk.empty, read.more(in0))).provide(env))
               case Done(terminal) => UIO(terminal(env))
               case Halt(cause)    => ZIO.halt(cause())
               case Effect(zio)    => zio.provide(env)
@@ -143,7 +140,7 @@ sealed trait ZConduit[-In, -R, +E, +Out, +Z] { self =>
               case MapOut(_, _)   => ???
               case Ensuring(next, finalizer) =>
                 scope.ensure(_ => finalizer.provide(env)) *> // todo: track keys for expedited release
-                  loop(scope, getter, env, in, leftover, next)
+                  loop(scope, getterRef, env, in, leftover, next)
               case ConcatAll(_, _, _) => ???
               case DoneCollect(_)     => ???
               case EmitCollect(_)     => ???
@@ -154,9 +151,9 @@ sealed trait ZConduit[-In, -R, +E, +Out, +Z] { self =>
             }
           }
 
-          val result = loop[In1, R1, E1, Out, Z](scope.scope, getter, env, input, Chunk.empty, self)
+          val result = loop[In1, R1, E1, Out, Z](scope.scope, getterRef, env, input, Chunk.empty, self)
 
-          (UIO(getter.get.apply()), result)
+          (getterRef.await.map(_.apply()), result)
         }
         .ensuring(scope.close(()))
     }
@@ -380,4 +377,31 @@ class ZSink[In, -R, +E, +Z](val conduit: ZConduit[In, R, E, In, Z]) extends AnyV
         ZConduit.emitAll(chunk.collect { case Left(chunk) => chunk }.flatten).map(_ => z2)
       }
     )
+}
+
+class DelayedRef[A](data: Ref[DelayedRef.State[A]]) {
+  import DelayedRef.State._
+
+  def await: UIO[A] =
+    data.get.flatMap {
+      case Unset(p) => p.await *> await
+      case Set(a)   => UIO.succeed(a)
+    }
+
+  def set(a: A): UIO[Any] =
+    data.modify {
+      case Unset(p) => (p.succeed(()), Set(a))
+      case Set(_)   => (UIO.unit, Set(a))
+    }.flatten.uninterruptible
+}
+
+object DelayedRef {
+  sealed abstract class State[A]
+  object State {
+    case class Unset[A](p: Promise[Nothing, Unit]) extends State[A]
+    case class Set[A](ref: A)                      extends State[A]
+  }
+
+  def make[A]: UIO[DelayedRef[A]] =
+    Promise.make[Nothing, Unit].flatMap(p => Ref.make(State.Unset[A](p): State[A])).map(new DelayedRef(_))
 }
