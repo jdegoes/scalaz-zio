@@ -1,6 +1,7 @@
 package zio.stream.experimental
 
 import zio._
+import java.util.concurrent.atomic.AtomicReference
 
 sealed trait ZConduit[-In, -R, +E, +Out, +Z] { self =>
   def &&&[In2, R1 <: R, E1 >: E, Out2, Z2](
@@ -110,38 +111,54 @@ sealed trait ZConduit[-In, -R, +E, +Out, +Z] { self =>
     input: ZIO[R1, E1, Chunk[In1]],
     output: Chunk[Out] => ZIO[R1, E1, Any]
   ): ZIO[R1, Nothing, (UIO[Either[E1, Z]], IO[E1, Z])] =
-    ZIO.access[R1] { env =>
-      import ZConduit._
+    ZScope.make[Any].flatMap { scope =>
+      ZIO
+        .access[R1] { env =>
+          import ZConduit._
 
-      val _ = (input, output)
+          val _ = (input, output)
 
-      val getter: () => Either[E1, Z] = ???
+          val getter: AtomicReference[() => Either[E1, Z]] = ???
 
-      def loop[In, R, E, Out, Z](env: R, leftover: Chunk[In], conduit: ZConduit[In, R, E, Out, Z]): IO[E, Z] = {
-        val _ = leftover
+          def loop[In, R, E, Out, Z](
+            scope: ZScope[Any],
+            getter: AtomicReference[() => Either[E, Z]],
+            env: R,
+            in: ZIO[R, E, Chunk[In]],
+            leftover: Chunk[In],
+            conduit: ZConduit[In, R, E, Out, Z]
+          ): IO[E, Z] = {
+            val _ = leftover
 
-        conduit match {
-          case Pipe(_, _)         => ???
-          case Read(_, _)         => ???
-          case Done(terminal)     => UIO(terminal(env))
-          case Fail(_)            => ???
-          case Effect(_)          => ???
-          case EmitAll(_)         => ???
-          case MapOut(_, _)       => ???
-          case Ensuring(_, _)     => ???
-          case ConcatAll(_, _, _) => ???
-          case DoneCollect(_)     => ???
-          case EmitCollect(_)     => ???
-          case MergeAll(_, _, _)  => ???
-          case FlatMap(_, _)      => ???
-          case CatchAll(_, _)     => ???
-          case Parallel(_, _)     => ???
+            conduit match {
+              case Pipe(_, _) => ???
+              case read: Read[In, R, E, Out, Z] =>
+                UIO(getter.set(read.done)) *>
+                  (if (leftover.nonEmpty) loop(scope, getter, env, in, Chunk.empty, read.more(leftover))
+                   else in.flatMap(in0 => loop(scope, getter, env, in, Chunk.empty, read.more(in0))).provide(env))
+              case Done(terminal) => UIO(terminal(env))
+              case Halt(cause)    => ZIO.halt(cause())
+              case Effect(zio)    => zio.provide(env)
+              case EmitAll(_)     => ???
+              case MapOut(_, _)   => ???
+              case Ensuring(next, finalizer) =>
+                scope.ensure(_ => finalizer.provide(env)) *> // todo: track keys for expedited release
+                  loop(scope, getter, env, in, leftover, next)
+              case ConcatAll(_, _, _) => ???
+              case DoneCollect(_)     => ???
+              case EmitCollect(_)     => ???
+              case MergeAll(_, _, _)  => ???
+              case FlatMap(_, _)      => ???
+              case CatchAll(_, _)     => ???
+              case Parallel(_, _)     => ???
+            }
+          }
+
+          val result = loop[In1, R1, E1, Out, Z](scope.scope, getter, env, input, Chunk.empty, self)
+
+          (UIO(getter.get.apply()), result)
         }
-      }
-
-      val result = loop[In1, R1, E1, Out, Z](env, Chunk.empty, self)
-
-      (UIO(getter()), result)
+        .ensuring(scope.close(()))
     }
 
   def map[Z2](f: Z => Z2): ZConduit[In, R, E, Out, Z2] = self.flatMap(z => ZConduit.succeed(f(z)))
@@ -229,7 +246,7 @@ object ZConduit {
     done: () => Either[E, Z]
   )                                                                    extends ZConduit[In, R, E, Out, Z]
   private[zio] final case class Done[R, Z](terminal: R => Z)           extends ZConduit[Any, R, Nothing, Nothing, Z]
-  private[zio] final case class Fail[E](error: () => E)                extends ZConduit[Any, Any, E, Nothing, Nothing]
+  private[zio] final case class Halt[E](error: () => Cause[E])         extends ZConduit[Any, Any, E, Nothing, Nothing]
   private[zio] final case class Effect[R, E, Out](zio: ZIO[R, E, Out]) extends ZConduit[Any, R, E, Nothing, Out]
   private[zio] final case class EmitAll[Out](chunk: Chunk[Out])        extends ZConduit[Any, Any, Nothing, Out, Any]
   private[zio] final case class MapOut[In, R, E, Out, Z, Out2](conduit: ZConduit[In, R, E, Out, Z], f: Out => Out2)
@@ -279,14 +296,14 @@ object ZConduit {
   )(z: Z)(f: (Z, Z) => Z): ZConduit[In, R, E, Out, Z] =
     ConcatAll(z, f, conduits)
 
-  def end[In, Z](result: => Z): ZConduit[Any, Any, Nothing, Nothing, Z] = Done(_ => result)
+  def end[Z](result: => Z): ZConduit[Any, Any, Nothing, Nothing, Z] = Done(_ => result)
 
-  def endWith[In, R, Z](f: R => Z): ZConduit[In, R, Nothing, Nothing, Z] = Done(r => f(r))
+  def endWith[R, Z](f: R => Z): ZConduit[Any, R, Nothing, Nothing, Z] = Done(r => f(r))
 
   def emitAll[Out](all: Chunk[Out]): ZConduit[Any, Any, Nothing, Out, Unit] =
     EmitAll(all).map(_ => ())
 
-  def fail[E](e: => E): ZConduit[Any, Any, E, Nothing, Nothing] = Fail(() => e)
+  def fail[E](e: => E): ZConduit[Any, Any, E, Nothing, Nothing] = halt(Cause.fail(e))
 
   def fromEffect[R, E, A](zio: ZIO[R, E, A]): ZConduit[Any, R, E, Nothing, A] = Effect(zio)
 
@@ -295,6 +312,8 @@ object ZConduit {
 
   def fromOption[A](option: Option[A]): ZConduit[Any, Any, None.type, Nothing, A] =
     option.fold[ZConduit[Any, Any, None.type, Nothing, A]](ZConduit.fail(None))(ZConduit.succeed(_))
+
+  def halt[E](cause: => Cause[E]): ZConduit[Any, Any, E, Nothing, Nothing] = Halt(() => cause)
 
   def identity[In]: ZConduit[In, Any, Nothing, In, Unit] =
     readChunk[In].flatMap(emitAll(_)).repeated.catchAll(_ => unit)
