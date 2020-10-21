@@ -19,12 +19,13 @@ The most common and easy way to create suites is to use `suite` function. For te
 
 ```scala mdoc
 import zio.test._
+import zio.test.environment.Live
 import zio.clock.nanoTime
 import Assertion.isGreaterThan
 
 val clockSuite = suite("clock") (
   testM("time is non-zero") {
-    assertM(nanoTime)(isGreaterThan(0L))
+    assertM(Live.live(nanoTime))(isGreaterThan(0L))
   }
 )
 ```
